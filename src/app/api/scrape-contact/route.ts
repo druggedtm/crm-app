@@ -23,12 +23,17 @@ export async function POST(request: Request) {
       );
     }
 
+    let url = website.trim();
+    if (!url.startsWith("http://") && !url.startsWith("https://")) {
+      url = `https://${url}`;
+    }
+
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 15000);
 
     let html: string;
     try {
-      const res = await fetch(website, {
+      const res = await fetch(url, {
         signal: controller.signal,
         headers: {
           "User-Agent":
@@ -42,7 +47,7 @@ export async function POST(request: Request) {
 
       if (!res.ok) {
         return NextResponse.json(
-          { error: `Failed to fetch website: HTTP ${res.status}` },
+          { error: `Website blocked the scraper (HTTP ${res.status})` },
           { status: 502 }
         );
       }
@@ -52,13 +57,16 @@ export async function POST(request: Request) {
       clearTimeout(timeout);
       if (fetchErr instanceof DOMException && fetchErr.name === "AbortError") {
         return NextResponse.json(
-          { error: "Website request timed out" },
+          { error: "Website request timed out. The site may be blocking scrapers." },
           { status: 504 }
         );
       }
       const msg =
-        fetchErr instanceof Error ? fetchErr.message : "Fetch failed";
-      return NextResponse.json({ error: msg }, { status: 502 });
+        fetchErr instanceof Error ? fetchErr.message : "Could not reach website";
+      return NextResponse.json(
+        { error: `Failed to fetch website: ${msg}` },
+        { status: 502 }
+      );
     }
 
     const $ = cheerio.load(html);
@@ -118,33 +126,49 @@ export async function POST(request: Request) {
     const extractedEmail = emails.size > 0 ? Array.from(emails)[0] : null;
     const hasSocials = Object.keys(socialLinks).length > 0;
 
+    if (!extractedEmail && !hasSocials) {
+      return NextResponse.json({
+        success: true,
+        email: null,
+        social_links: null,
+        emails_found: [],
+        message: "No contact info found on this website",
+      });
+    }
+
     const updateData: Record<string, unknown> = {};
     if (extractedEmail) updateData.email = extractedEmail;
     if (hasSocials) updateData.social_links = socialLinks;
 
-    if (Object.keys(updateData).length > 0) {
-      const supabase = createClient(supabaseUrl, supabaseServiceKey);
-      const { error: updateError } = await supabase
-        .from("leads")
-        .update(updateData)
-        .eq("id", leadId);
+    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+    const { error: updateError } = await supabase
+      .from("leads")
+      .update(updateData)
+      .eq("id", leadId);
 
-      if (updateError) {
-        return NextResponse.json(
-          { error: `Database update failed: ${updateError.message}` },
-          { status: 500 }
-        );
-      }
+    if (updateError) {
+      return NextResponse.json(
+        { error: `Database update failed: ${updateError.message}` },
+        { status: 500 }
+      );
     }
+
+    const parts: string[] = [];
+    if (extractedEmail) parts.push(`Found email: ${extractedEmail}`);
+    if (hasSocials) parts.push(`Found ${Object.keys(socialLinks).length} social link(s)`);
 
     return NextResponse.json({
       success: true,
       email: extractedEmail,
       social_links: hasSocials ? socialLinks : null,
       emails_found: Array.from(emails),
+      message: parts.join(". "),
     });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Unknown error";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json(
+      { error: `Scraper error: ${message}` },
+      { status: 500 }
+    );
   }
 }
