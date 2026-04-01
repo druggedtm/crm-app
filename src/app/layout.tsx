@@ -28,8 +28,9 @@ export default function RootLayout({
     <html
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      suppressHydrationWarning
     >
-      <body className="min-h-full bg-zinc-50 text-zinc-900">
+      <body className="min-h-full bg-zinc-50 text-zinc-900" suppressHydrationWarning>
         <Toaster position="top-right" />
         <Sidebar />
         <main className="min-h-screen lg:ml-64">

@@ -26,8 +26,7 @@ export async function POST(request: Request) {
     const sanitizedCity = city.replace(/['"]/g, "").trim();
     const sanitizedKeyword = keyword.replace(/['"]/g, "").trim();
 
-    const overpassQuery = `
-[out:json][timeout:30];
+    const overpassQuery = `[out:json][timeout:25];
 area["name"="${sanitizedCity}"]["boundary"="administrative"]->.searchArea;
 (
   node["amenity"~"${sanitizedKeyword}",i](area.searchArea);
@@ -43,27 +42,52 @@ out body;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 30000);
 
-    const overpassResponse = await fetch(
-      "https://overpass-api.de/api/interpreter",
-      {
-        method: "POST",
-        body: `data=${encodeURIComponent(overpassQuery)}`,
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        signal: controller.signal,
+    let overpassResponse: Response;
+    try {
+      overpassResponse = await fetch(
+        "https://overpass-api.de/api/interpreter",
+        {
+          method: "POST",
+          body: `data=${encodeURIComponent(overpassQuery)}`,
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          signal: controller.signal,
+        }
+      );
+    } catch (fetchErr: unknown) {
+      clearTimeout(timeout);
+      if (fetchErr instanceof DOMException && fetchErr.name === "AbortError") {
+        return NextResponse.json(
+          { error: "OpenStreetMap server is currently busy. Please try again in a minute." },
+          { status: 503 }
+        );
       }
-    );
-
-    clearTimeout(timeout);
-
-    if (!overpassResponse.ok) {
-      const errorText = await overpassResponse.text();
       return NextResponse.json(
-        { error: `Overpass API error: ${errorText}` },
-        { status: 502 }
+        { error: "OpenStreetMap server is currently busy. Please try again in a minute." },
+        { status: 503 }
       );
     }
 
-    const overpassData = await overpassResponse.json();
+    clearTimeout(timeout);
+
+    const contentType = overpassResponse.headers.get("content-type") || "";
+
+    if (!overpassResponse.ok || !contentType.includes("application/json")) {
+      return NextResponse.json(
+        { error: "OpenStreetMap server is currently busy. Please try again in a minute." },
+        { status: 503 }
+      );
+    }
+
+    let overpassData: { elements?: OverpassElement[] };
+    try {
+      overpassData = await overpassResponse.json();
+    } catch {
+      return NextResponse.json(
+        { error: "OpenStreetMap server is currently busy. Please try again in a minute." },
+        { status: 503 }
+      );
+    }
+
     const elements: OverpassElement[] = overpassData.elements || [];
 
     const leads = elements
@@ -130,12 +154,6 @@ out body;
       message: `Successfully saved ${leads.length} leads!`,
     });
   } catch (err: unknown) {
-    if (err instanceof DOMException && err.name === "AbortError") {
-      return NextResponse.json(
-        { error: "Overpass API timed out. Try a more specific keyword or a smaller city." },
-        { status: 504 }
-      );
-    }
     const message = err instanceof Error ? err.message : "Unknown error";
     return NextResponse.json({ error: message }, { status: 500 });
   }

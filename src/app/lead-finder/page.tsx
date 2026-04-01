@@ -1,19 +1,18 @@
 "use client";
 
 import { useState } from "react";
+import toast from "react-hot-toast";
 
 export default function LeadFinderPage() {
   const [city, setCity] = useState("");
   const [keyword, setKeyword] = useState("");
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
 
   async function handleSearch(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
     setMessage(null);
-    setError(null);
 
     try {
       const res = await fetch("/api/find-leads", {
@@ -25,12 +24,15 @@ export default function LeadFinderPage() {
       const data = await res.json();
 
       if (!res.ok) {
-        setError(data.error || "Something went wrong");
+        toast.error(data.error || "Something went wrong");
+      } else if (data.count === 0) {
+        toast(data.message || "No results found", { icon: "info" });
       } else {
         setMessage(data.message);
+        toast.success(data.message);
       }
     } catch {
-      setError("Network error. Please try again.");
+      toast.error("Network error. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -108,12 +110,6 @@ export default function LeadFinderPage() {
         {message && (
           <div className="mt-4 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800">
             {message}
-          </div>
-        )}
-
-        {error && (
-          <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-            {error}
           </div>
         )}
       </div>
